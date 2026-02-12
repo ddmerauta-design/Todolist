@@ -5,7 +5,8 @@ from datetime import datetime
 app = Flask(__name__)
 
 # This is our temporary database, we no longer need this if implementing sqlite, this was the whiteboard
-#
+# Now the U and D from our CRUD wont be able to update any longer as its trying to reference the previous temporary DATA cache
+
 #DATA = {
 #    "items": []
 #}
@@ -29,12 +30,6 @@ def init_db():
 
 # Run this immediately when the app starts
 init_db()
-
-def get_next_id():
-    # If list is empty, start at ID 1. Otherwise, find the highest ID and add 1.
-    if not DATA["items"]:
-        return 1
-    return max(item["id"] for item in DATA["items"]) + 1
 
 @app.route("/")
 def index():
@@ -98,58 +93,108 @@ def list_items():
 # --- UPDATE (The 'U' in CRUD) ---
 @app.route("/items/<int:item_id>", methods=["PUT"])
 def update_item(item_id):
-    # 1. Find the item
-    item = next((i for i in DATA["items"] if i["id"] == item_id), None)
-    
-    # 2. If it doesn't exist, yell at the user
-    if item is None:
-        return jsonify({"error": "Item not found"}), 404
-
-    # 3. Get the new data
     data = request.get_json()
-
-    # 4. Update fields ONLY if the user sent them
+    
+    # 1. Start building the SQL sentence
+    # We will collect pieces like "title = ?" and "completed = ?"
+    fields_to_update = []
+    values = []
+    
     if "title" in data:
-        item["title"] = data["title"]
+        fields_to_update.append("title = ?")
+        values.append(data["title"])
+        
     if "contents" in data:
-        item["contents"] = data["contents"]
+        fields_to_update.append("contents = ?")
+        values.append(data["contents"])
+        
     if "priority" in data:
-        item["priority"] = data["priority"]
+        fields_to_update.append("priority = ?")
+        values.append(data["priority"])
+        
     if "completed" in data:
-        item["completed"] = data["completed"]
-
-    # 5. Always update the timestamp
-    item["updatedAt"] = datetime.now().isoformat()
-
-    return jsonify(item)
+        fields_to_update.append("completed = ?")
+        values.append(data["completed"])
+        
+    # If they didn't send any valid fields, stop here
+    if not fields_to_update:
+        return jsonify({"error": "No data provided"}), 400
+        
+    # Always update the 'updatedAt' time
+    fields_to_update.append("updated_at = ?")
+    values.append(datetime.now().isoformat())
+    
+    # Add the ID at the end for the "WHERE id = ?" part
+    values.append(item_id)
+    
+    # 2. Join the pieces together into one big SQL string
+    # It will look like: "UPDATE items SET title = ?, completed = ? WHERE id = ?"
+    sql_query = f"UPDATE items SET {', '.join(fields_to_update)} WHERE id = ?"
+    
+    # 3. Execute it
+    conn = sqlite3.connect('todo.db')
+    c = conn.cursor()
+    c.execute(sql_query, values)
+    conn.commit()
+    
+    if c.rowcount == 0:
+        conn.close()
+        return jsonify({"error": "Item not found"}), 404
+        
+    conn.close()
+    
+    # 4. Return the updated item so the user can see it
+    return jsonify({"message": "Item updated", "id": item_id})
 
 # --- DELETE (The 'D' in CRUD) ---
 @app.route("/items/<int:item_id>", methods=["DELETE"])
 def delete_item(item_id):
-    global DATA
-    # This weird looking line keeps every item EXCEPT the one we want to delete
-    DATA["items"] = [item for item in DATA["items"] if item["id"] != item_id]
+    conn = sqlite3.connect('todo.db')
+    c = conn.cursor()
     
+    # SQL Translation: "Delete from the 'items' table where the id matches X"
+    c.execute("DELETE FROM items WHERE id = ?", (item_id,))
+    
+    conn.commit()
+    
+    # Check if we actually deleted something (rowcount tells us how many rows were affected)
+    if c.rowcount == 0:
+        conn.close()
+        return jsonify({"error": "Item not found"}), 404
+        
+    conn.close()
     return jsonify({"message": "Item deleted"}), 200
 
 # --- CLEANUP (Delete all completed) ---
 @app.route("/items/cleanup", methods=["DELETE"])
 def cleanup_completed():
-    global DATA
-    # Logic: Keep the item ONLY if 'completed' is False
-    DATA["items"] = [item for item in DATA["items"] if item["completed"] == False]
+    conn = sqlite3.connect('todo.db')
+    c = conn.cursor()
     
-    return jsonify({"message": "Completed items deleted"}), 200
+    # SQL: Delete every row where completed is 1 (True)
+    c.execute("DELETE FROM items WHERE completed = 1")
+    
+    conn.commit()
+    deleted_count = c.rowcount # How many did we zap?
+    conn.close()
+    
+    return jsonify({"message": f"Deleted {deleted_count} completed items"}), 200
 
 # --- SORTING (Advanced Read) --- ( TIME RELATED)
 @app.route("/items/sorted", methods=["GET"])
 def get_sorted_items():
-    # 'key=lambda x: ...' is just a fancy way of saying:
-    # "For every item 'x', use its 'createdAt' value to decide the order."
-    # reverse=True means Descending (Newest first).
-    sorted_list = sorted(DATA["items"], key=lambda x: x["createdAt"], reverse=True)
+    conn = sqlite3.connect('todo.db')
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
     
-    return jsonify(sorted_list)
+    # SQL: Select all items, but order them by creation date (Descending)
+    c.execute("SELECT * FROM items ORDER BY created_at DESC")
+    rows = c.fetchall()
+    
+    results = [dict(row) for row in rows]
+    conn.close()
+    
+    return jsonify(results)
 
 if __name__ == "__main__":
     app.run(port=8000, debug=True)
