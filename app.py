@@ -4,6 +4,7 @@ from datetime import datetime
 
 app = Flask(__name__)
 
+DB_NAME = "todo.db"
 # This is our temporary database, we no longer need this if implementing sqlite, this was the whiteboard
 # Now the U and D from our CRUD wont be able to update any longer as its trying to reference the previous temporary DATA cache
 
@@ -12,7 +13,7 @@ app = Flask(__name__)
 #}
 
 def init_db():
-    conn = sqlite3.connect('todo.db')
+    conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     c.execute('''
         CREATE TABLE IF NOT EXISTS items (
@@ -48,7 +49,7 @@ def create_item():
     current_time = datetime.now().isoformat()
     
     # 2. Connect to the filing cabinet
-    conn = sqlite3.connect('todo.db')
+    conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     
     # 3. Insert the data (SQL Language)
@@ -76,7 +77,7 @@ def create_item():
 # --- READ (The 'R' in CRUD) ---
 @app.route("/items", methods=["GET"])
 def list_items():
-    conn = sqlite3.connect('todo.db')
+    conn = sqlite3.connect(DB_NAME)
     # This weird line helps us get data back as a dictionary (key: value)
     conn.row_factory = sqlite3.Row 
     c = conn.cursor()
@@ -132,7 +133,7 @@ def update_item(item_id):
     sql_query = f"UPDATE items SET {', '.join(fields_to_update)} WHERE id = ?"
     
     # 3. Execute it
-    conn = sqlite3.connect('todo.db')
+    conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     c.execute(sql_query, values)
     conn.commit()
@@ -149,7 +150,7 @@ def update_item(item_id):
 # --- DELETE (The 'D' in CRUD) ---
 @app.route("/items/<int:item_id>", methods=["DELETE"])
 def delete_item(item_id):
-    conn = sqlite3.connect('todo.db')
+    conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     
     # SQL Translation: "Delete from the 'items' table where the id matches X"
@@ -168,7 +169,7 @@ def delete_item(item_id):
 # --- CLEANUP (Delete all completed) ---
 @app.route("/items/cleanup", methods=["DELETE"])
 def cleanup_completed():
-    conn = sqlite3.connect('todo.db')
+    conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     
     # SQL: Delete every row where completed is 1 (True)
@@ -183,7 +184,7 @@ def cleanup_completed():
 # --- SORTING (Advanced Read) --- ( TIME RELATED)
 @app.route("/items/sorted", methods=["GET"])
 def get_sorted_items():
-    conn = sqlite3.connect('todo.db')
+    conn = sqlite3.connect(DB_NAME)
     conn.row_factory = sqlite3.Row
     c = conn.cursor()
     
