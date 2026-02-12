@@ -1,12 +1,34 @@
 from flask import Flask, jsonify, request
+import sqlite3
 from datetime import datetime
 
 app = Flask(__name__)
 
-# This is our temporary database
-DATA = {
-    "items": []
-}
+# This is our temporary database, we no longer need this if implementing sqlite, this was the whiteboard
+#
+#DATA = {
+#    "items": []
+#}
+
+def init_db():
+    conn = sqlite3.connect('todo.db')
+    c = conn.cursor()
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            contents TEXT,
+            priority TEXT,
+            completed BOOLEAN,
+            created_at TEXT,
+            updated_at TEXT
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+# Run this immediately when the app starts
+init_db()
 
 def get_next_id():
     # If list is empty, start at ID 1. Otherwise, find the highest ID and add 1.
@@ -20,33 +42,58 @@ def index():
 
 # --- CREATE (The 'C' in CRUD) ---
 @app.route("/items", methods=["POST"])
+
 def create_item():
     data = request.get_json()
     
-    # Validation: Make sure they sent a title
+    # 1. Validation (Same as before)
     if not data or "title" not in data:
         return jsonify({"error": "Title is required"}), 400
 
-    # Get the current time
     current_time = datetime.now().isoformat()
-
-    new_item = {
-        "id": get_next_id(),
-        "title": data["title"],
-        "contents": data.get("contents", ""), # attempts to extract data from what was sent under contents, if nothing results in ""
-        "priority": data.get("priority", "Medium"),  # <--- YOU ADDED THIS! #get data if none then medium automatically,
-        "completed": False, #assumes that the priority = automatically false
-        "createdAt": current_time,
-        "updatedAt": current_time
-    }
     
-    DATA["items"].append(new_item)
-    return jsonify(new_item), 201
+    # 2. Connect to the filing cabinet
+    conn = sqlite3.connect('todo.db')
+    c = conn.cursor()
+    
+    # 3. Insert the data (SQL Language)
+    # The '?' marks are placeholders for safety
+    c.execute('''
+        INSERT INTO items (title, contents, priority, completed, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+    ''', (
+        data["title"],
+        data.get("contents", ""),
+        data.get("priority", "Medium"),
+        False,  # completed is False by default
+        current_time,
+        current_time
+    ))
+    
+    # 4. Save and Close
+    conn.commit()
+    new_id = c.lastrowid # Get the ID of the item we just made
+    conn.close()
+
+    # Return the new ID so the user knows it worked
+    return jsonify({"id": new_id, "message": "Saved to database!"}), 201
 
 # --- READ (The 'R' in CRUD) ---
 @app.route("/items", methods=["GET"])
 def list_items():
-    return jsonify(DATA["items"])
+    conn = sqlite3.connect('todo.db')
+    # This weird line helps us get data back as a dictionary (key: value)
+    conn.row_factory = sqlite3.Row 
+    c = conn.cursor()
+    
+    c.execute("SELECT * FROM items")
+    rows = c.fetchall()
+    
+    # Convert database rows back to a Python list
+    results = [dict(row) for row in rows]
+    
+    conn.close()
+    return jsonify(results)
 
 # --- UPDATE (The 'U' in CRUD) ---
 @app.route("/items/<int:item_id>", methods=["PUT"])
