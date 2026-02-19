@@ -69,9 +69,32 @@ def test_delete_item(client):
     assert del_res.status_code == 200
     
     # 3. Verify it's gone
-    # We can't just check len(data) == 0 because other tests might have left data behind
-    # We specifically check if THIS item is gone.
     get_res = client.get("/items")
     data = get_res.get_json()
     item = next((i for i in data if i["id"] == item_id), None)
     assert item is None
+
+def test_create_invalid_item(client):
+    """The Robot tries to send a bad priority and expects a 422 error."""
+    response = client.post("/items", json={
+        "title": "Bad Task",
+        "priority": "ULTRA-HIGH" # Not allowed by our schema!
+    })
+    # 422 is the standard code for "Unprocessable Entity" (Validation Error)
+    assert response.status_code == 422
+    assert "priority" in response.get_json()
+
+def test_update_invalid_item(client):
+    """Test that the Security Guard blocks bad updates too."""
+    # 1. Create a valid item first
+    create_res = client.post("/items", json={"title": "Update Test"})
+    item_id = create_res.get_json()["id"]
+    
+    # 2. Try to update it with a garbage priority
+    response = client.put(f"/items/{item_id}", json={
+        "priority": "SUPER-HIGH"
+    })
+    
+    # 3. Assert that it was REJECTED
+    assert response.status_code == 422
+    assert "priority" in response.get_json()

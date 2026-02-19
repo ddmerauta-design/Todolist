@@ -1,6 +1,8 @@
 from flask import Blueprint, request, jsonify
 from datetime import datetime
 from db import get_db_connection
+from schemas import item_schema
+from marshmallow import ValidationError
 
 # This acts like a mini-app that holds all your routes related to "items". It helps us keep things organized.
 items_bp = Blueprint('items', __name__)
@@ -9,22 +11,22 @@ items_bp = Blueprint('items', __name__)
 
 # --- CREATE (The 'C' in CRUD) ---
 @items_bp.route("/items", methods=["POST"])
-
 def create_item():
-    data = request.get_json()
-    
-    # 1. Validation (Same as before)
-    if not data or "title" not in data:
-        return jsonify({"error": "Title is required"}), 400
+    json_data = request.get_json()
+    if not json_data:
+        return jsonify({"message": "No input data provided"}), 400
 
+    # 1. VALIDATION: Check if the data follows the rules
+    try:
+        data = item_schema.load(json_data)
+    except ValidationError as err:
+        # If the data is bad, stop here and tell the user why
+        return jsonify(err.messages), 422
+
+    # 2. If it passed, continue to database logic
     current_time = datetime.now().isoformat()
-    
-    # 2. Connect to the filing cabinet
     conn = get_db_connection()
     c = conn.cursor()
-    
-    # 3. Insert the data (SQL Language)
-    # The '?' marks are placeholders for safety
     c.execute('''
         INSERT INTO items (title, contents, priority, completed, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?)
@@ -32,17 +34,14 @@ def create_item():
         data["title"],
         data.get("contents", ""),
         data.get("priority", "Medium"),
-        False,  # completed is False by default
+        False,
         current_time,
         current_time
     ))
-    
-    # 4. Save and Close
     conn.commit()
-    new_id = c.lastrowid # Get the ID of the item we just made
+    new_id = c.lastrowid
     conn.close()
 
-    # Return the new ID so the user knows it worked
     return jsonify({"id": new_id, "message": "Saved to database!"}), 201
 
 # --- READ (The 'R' in CRUD) ---
@@ -64,45 +63,35 @@ def list_items():
 # --- UPDATE (The 'U' in CRUD) ---
 @items_bp.route("/items/<int:item_id>", methods=["PUT"])
 def update_item(item_id):
-    data = request.get_json()
+    json_data = request.get_json()
     
-    # 1. Start building the SQL sentence
-    # We will collect pieces like "title = ?" and "completed = ?"
+    # 1. Ask the Security Guard to check the incoming data
+    try:
+        # partial=True allows us to update just one field (like only 'completed')
+        data = item_schema.load(json_data, partial=True)
+    except ValidationError as err:
+        return jsonify(err.messages), 422
+
+    # 2. Build the SQL update dynamically based on the VALIDATED data
     fields_to_update = []
     values = []
     
-    if "title" in data:
-        fields_to_update.append("title = ?")
-        values.append(data["title"])
+    for key, value in data.items():
+        fields_to_update.append(f"{key} = ?")
+        values.append(value)
         
-    if "contents" in data:
-        fields_to_update.append("contents = ?")
-        values.append(data["contents"])
-        
-    if "priority" in data:
-        fields_to_update.append("priority = ?")
-        values.append(data["priority"])
-        
-    if "completed" in data:
-        fields_to_update.append("completed = ?")
-        values.append(data["completed"])
-        
-    # If they didn't send any valid fields, stop here
     if not fields_to_update:
-        return jsonify({"error": "No data provided"}), 400
+        return jsonify({"error": "No valid data provided"}), 400
         
-    # Always update the 'updatedAt' time
+    # Always update the timestamp
     fields_to_update.append("updated_at = ?")
     values.append(datetime.now().isoformat())
     
-    # Add the ID at the end for the "WHERE id = ?" part
+    # Add the ID for the WHERE clause
     values.append(item_id)
     
-    # 2. Join the pieces together into one big SQL string
-    # It will look like: "UPDATE items SET title = ?, completed = ? WHERE id = ?"
     sql_query = f"UPDATE items SET {', '.join(fields_to_update)} WHERE id = ?"
     
-    # 3. Execute it
     conn = get_db_connection()
     c = conn.cursor()
     c.execute(sql_query, values)
@@ -113,8 +102,6 @@ def update_item(item_id):
         return jsonify({"error": "Item not found"}), 404
         
     conn.close()
-    
-    # 4. Return the updated item so the user can see it
     return jsonify({"message": "Item updated", "id": item_id})
 
 # --- DELETE (The 'D' in CRUD) ---
